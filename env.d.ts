@@ -1,6 +1,7 @@
 namespace NodeJS {
   interface ProcessEnv {
-    API_KEY?: string;
+    AI_GATEWAY_API_KEY?: string;
+    MODEL_ID?: string;
   }
 }
 

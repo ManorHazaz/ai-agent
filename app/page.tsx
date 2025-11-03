@@ -1,17 +1,16 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
-
-type Message = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-};
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport, isTextUIPart } from 'ai';
+import { useEffect, useRef, useState } from 'react';
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  
+  const { messages, sendMessage, status } = useChat({
+    transport: new DefaultChatTransport({ api: '/api/chat' }),
+  });
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -30,93 +29,15 @@ export default function Home() {
     }
   }, [input]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input.trim(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    const currentInput = input;
-    setInput('');
-    setIsLoading(true);
-
-    // Create assistant message placeholder
-    const assistantId = (Date.now() + 1).toString();
-    const assistantMessage: Message = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-    };
-    setMessages((prev) => [...prev, assistantMessage]);
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [...messages, userMessage].map((msg) => ({
-            role: msg.role,
-            content: msg.content,
-          })),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get response');
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('0:')) {
-            try {
-              const data = JSON.parse(line.slice(2));
-              if (data.type === 'text-delta' && data.textDelta) {
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === assistantId
-                      ? { ...msg, content: msg.content + data.textDelta }
-                      : msg
-                  )
-                );
-              }
-            } catch (e) {
-              // Skip invalid JSON
-            }
-          }
-        }
-      }
-    } catch (error: any) {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantId
-            ? { ...msg, content: `Error: ${error.message}` }
-            : msg
-        )
-      );
-    } finally {
-      setIsLoading(false);
+    if (input.trim() && status === 'ready') {
+      sendMessage({ role: 'user', parts: [{ type: 'text', text: input }] });
+      setInput('');
     }
   };
 
@@ -126,6 +47,13 @@ export default function Home() {
       handleSubmit(e as any);
     }
   };
+
+  const getMessageText = (message: typeof messages[0]) => {
+    const textParts = message.parts.filter(isTextUIPart);
+    return textParts.map(part => part.text).join('');
+  };
+
+  const isLoading = status === 'submitted' || status === 'streaming';
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-900">
@@ -173,7 +101,7 @@ export default function Home() {
                 }`}
               >
                 <div className="whitespace-pre-wrap break-words leading-relaxed">
-                  {message.content || (
+                  {getMessageText(message) || (
                     <span className="text-gray-400">Thinking...</span>
                   )}
                 </div>
@@ -213,7 +141,7 @@ export default function Home() {
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder="Type your message..."
               rows={1}
@@ -221,7 +149,7 @@ export default function Home() {
             />
             <button
               type="submit"
-              disabled={!input.trim() || isLoading}
+              disabled={!input.trim() || status !== 'ready'}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400"
               aria-label="Send message"
             >
