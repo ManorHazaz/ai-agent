@@ -1,27 +1,15 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  timestamp: Date;
 };
 
-const API_KEY = process.env.API_KEY;
-
-console.log('API_KEY:', API_KEY);
-
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: "Hello! I'm your AI assistant. How can I help you today?",
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -35,46 +23,109 @@ export default function Home() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input.trim(),
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput('');
-    setIsLoading(true);
-
-    // Simulate AI response (you can replace this with actual AI SDK integration)
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `I received your message: "${userMessage.content}". This is a placeholder response. You can integrate this with your AI SDK to get real responses.`,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-      setIsLoading(false);
-    }, 1000);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
   }, [input]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: input.trim(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    const currentInput = input;
+    setInput('');
+    setIsLoading(true);
+
+    // Create assistant message placeholder
+    const assistantId = (Date.now() + 1).toString();
+    const assistantMessage: Message = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+    };
+    setMessages((prev) => [...prev, assistantMessage]);
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [...messages, userMessage].map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get response');
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('0:')) {
+            try {
+              const data = JSON.parse(line.slice(2));
+              if (data.type === 'text-delta' && data.textDelta) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantId
+                      ? { ...msg, content: msg.content + data.textDelta }
+                      : msg
+                  )
+                );
+              }
+            } catch (e) {
+              // Skip invalid JSON
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantId
+            ? { ...msg, content: `Error: ${error.message}` }
+            : msg
+        )
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e as any);
+    }
+  };
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-900">
@@ -90,6 +141,18 @@ export default function Home() {
       {/* Messages Container */}
       <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto max-w-4xl space-y-6">
+          {messages.length === 0 && (
+            <div className="flex gap-4 justify-start">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-sm font-semibold text-white">
+                AI
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm dark:bg-gray-800 dark:text-gray-100">
+                <div className="whitespace-pre-wrap break-words leading-relaxed">
+                  Hello! I'm your AI assistant. How can I help you today?
+                </div>
+              </div>
+            </div>
+          )}
           {messages.map((message) => (
             <div
               key={message.id}
@@ -110,7 +173,9 @@ export default function Home() {
                 }`}
               >
                 <div className="whitespace-pre-wrap break-words leading-relaxed">
-                  {message.content}
+                  {message.content || (
+                    <span className="text-gray-400">Thinking...</span>
+                  )}
                 </div>
               </div>
               {message.role === 'user' && (
@@ -120,7 +185,7 @@ export default function Home() {
               )}
             </div>
           ))}
-          {isLoading && (
+          {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
             <div className="flex gap-4 justify-start">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-sm font-semibold text-white">
                 AI
@@ -141,7 +206,10 @@ export default function Home() {
       {/* Input Area */}
       <div className="border-t border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 px-4 py-4">
         <div className="mx-auto max-w-4xl">
-          <div className="flex items-end gap-3 rounded-2xl border border-gray-300 bg-white p-2 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <form
+            onSubmit={handleSubmit}
+            className="flex items-end gap-3 rounded-2xl border border-gray-300 bg-white p-2 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+          >
             <textarea
               ref={textareaRef}
               value={input}
@@ -152,7 +220,7 @@ export default function Home() {
               className="max-h-[200px] flex-1 resize-none border-none bg-transparent px-2 py-2 text-gray-900 placeholder-gray-500 outline-none focus:ring-0 dark:text-gray-100 dark:placeholder-gray-400"
             />
             <button
-              onClick={handleSend}
+              type="submit"
               disabled={!input.trim() || isLoading}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400"
               aria-label="Send message"
@@ -171,7 +239,7 @@ export default function Home() {
                 <path d="M22 2 11 13" />
               </svg>
             </button>
-          </div>
+          </form>
           <p className="mt-2 text-center text-xs text-gray-500 dark:text-gray-400">
             AI can make mistakes. Check important info.
           </p>
