@@ -9,6 +9,10 @@ type Message = {
   timestamp: Date;
 };
 
+const API_KEY = process.env.API_KEY;
+
+console.log('API_KEY:', API_KEY);
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([
     {
